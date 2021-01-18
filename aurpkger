@@ -1,0 +1,155 @@
+#!/usr/bin/sh
+
+alias echo='echo -e'
+
+# Some basic information
+readonly PROGRAM_NAME=$(basename $0)
+readonly COMPLETE_ARGS_LIST="$@"
+readonly VERSION="0.0.1"
+
+readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
+readonly aur_package_list="${program_cache}/package_list"
+
+# Colours
+readonly LIGHT_RED='\e[1;31m'
+readonly BLUE='\e[1m\e[0;36m'
+readonly RESET_CLR='\e[0m'
+readonly BOLD='\e[1m'
+readonly ITALIC='\e[3m'
+
+display_help_message() {
+    echo "Usage:  ${PROGRAM_NAME} <operation> [...]"
+    echo "Operations:"
+    echo "   ${PROGRAM_NAME} install   [options] <package(s)>"
+}
+
+initialization_and_sanitization() {
+    if ! ping archlinux.org -c 1 &> /dev/null; then
+        echo "${LIGHT_RED}error:${RESET_CLR} https://archlinux.org is unreachable"
+    fi
+
+    [[ -d ${program_cache} ]] || mkdir ${program_cache}
+
+    [[ -f ${aur_package_list} ]] || update_aur_package_list
+}
+
+update_aur_package_list() {
+    echo "==> Downloading list of AUR packages..."
+    curl -o ${aur_package_list}.gz -L https://aur.archlinux.org/packages.gz &>/dev/null
+
+    echo "==> Unzipping compressed file..."
+    gunzip < ${aur_package_list}.gz > ${aur_package_list}
+
+    echo "==> Removing compressed file..."
+    rm -f ${aur_package_list}.gz
+
+    echo "==> Removing comments from unzipped file..."
+    sed '/^#/d' -i ${aur_package_list}
+}
+
+search_packages_in_aur() {
+    declare results=$(grep "$@" ${aur_package_list})
+
+    while IFS= read -r pkg; do
+        echo "${BOLD}${BLUE}aur/${RESET_CLR}${BOLD}${pkg}${RESET_CLR}"
+    done <<< "${results}"
+
+    return 0
+}
+
+install_aur_package() {
+    declare pkg=$1
+
+    if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
+        echo "${LIGHT_RED}error:${RESET_CLR} package does not exist"
+        exit 1
+    fi
+
+    echo "git-cloning ${pkg}..."
+    git clone https://aur.archlinux.org/${pkg}.git ${program_cache}/${pkg} &> /dev/null
+
+    cd ${program_cache}/${pkg}
+
+    echo -En '>> Read PKGBUILD? [Y\n] '
+    read ans
+    if [[ ! ${ans} == "n" && ! ${ans} == "N" ]]; then
+        ${PAGER} ./PKGBUILD
+    fi
+
+    echo -En '>> Build package? [Y\n] '
+    read ans
+    if [[ ! ${ans} == "n" && ! ${ans} =~ "N" ]]; then
+        makepkg --install --syncdeps --rmdeps
+    else
+        echo "==> Package not installed; cleaning up..."
+        rm -rf ${program_cache}/${pkg}
+    fi
+
+    echo "\n==> Finished"
+
+    return 0
+}
+
+# main: centralizezd place to run all functions of the program
+main() {
+    initialization_and_sanitization
+
+    declare operation=$1
+
+    # Process options
+    case ${operation} in
+        -h )
+            display_help_message
+            exit 0
+            ;;
+
+        install )
+            shift # remove subcommand
+            declare pkgs=$@
+            
+            # Error checking
+            if [[ -z ${pkgs} ]]; then 
+                echo "${LIGHT_RED}error:${RESET_CLR} no package specified" &&
+                exit 1
+            else
+                shift
+            fi
+
+            for pkg in ${pkgs}; do
+                install_aur_package ${pkg}
+            done
+            ;;
+
+        search )
+            shift # remove subcommand
+            declare pkgs=$@
+
+            # Error checking 
+            if [[ -z ${pkgs} ]]; then 
+                echo "${LIGHT_RED}error:${RESET_CLR} no package specified" &&
+                exit 1
+            else
+                shift
+            fi
+            search_packages_in_aur ${pkgs}
+            ;;
+
+        update )
+            shift
+            if [[ ! -z $1 ]]; then
+                echo "warning: the 'update' operation takes no arguments"
+            fi
+
+            update_aur_package_list
+            ;;
+
+        * )
+            echo "${LIGHT_RED}error:${RESET_CLR} no operation specified (use -h for help)"
+            exit 1
+            ;;
+    esac
+
+    exit 0
+}
+
+main $COMPLETE_ARGS_LIST
