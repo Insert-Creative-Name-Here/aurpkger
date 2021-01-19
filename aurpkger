@@ -5,7 +5,7 @@ alias echo='echo -e'
 # Some basic information
 readonly PROGRAM_NAME=$(basename $0)
 readonly COMPLETE_ARGS_LIST="$@"
-readonly VERSION="0.0.1"
+readonly VERSION="0.0.2"
 
 readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
 readonly aur_package_list="${program_cache}/package_list"
@@ -30,20 +30,21 @@ initialization_and_sanitization() {
 
     [[ -d ${program_cache} ]] || mkdir ${program_cache}
 
-    [[ -f ${aur_package_list} ]] || update_aur_package_list
+    # Execute function in the background
+    [[ -f ${aur_package_list} ]] || update_aur_package_list &
 }
 
 update_aur_package_list() {
-    echo "==> Downloading list of AUR packages..."
+    [[ $1 == "v" ]] && echo "==> Downloading list of AUR packages..."
     curl -o ${aur_package_list}.gz -L https://aur.archlinux.org/packages.gz &>/dev/null
 
-    echo "==> Unzipping compressed file..."
+    [[ $1 == "v" ]] && echo "==> Unzipping compressed file..."
     gunzip < ${aur_package_list}.gz > ${aur_package_list}
 
-    echo "==> Removing compressed file..."
+    [[ $1 == "v" ]] && echo "==> Removing compressed file..."
     rm -f ${aur_package_list}.gz
 
-    echo "==> Removing comments from unzipped file..."
+    [[ $1 == "v" ]] && echo "==> Removing comments from unzipped file..."
     sed '/^#/d' -i ${aur_package_list}
 }
 
@@ -58,14 +59,14 @@ search_packages_in_aur() {
 }
 
 install_aur_package() {
-    declare pkg=$1
+    declare -r pkg=$1
 
     if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
-        echo "${LIGHT_RED}error:${RESET_CLR} package does not exist"
+        echo "${LIGHT_RED}error:${RESET_CLR} package does not exist in aur"
         exit 1
     fi
 
-    echo "git-cloning ${pkg}..."
+    echo "==> Downloading package '${pkg}'...\n"
     git clone https://aur.archlinux.org/${pkg}.git ${program_cache}/${pkg} &> /dev/null
 
     cd ${program_cache}/${pkg}
@@ -81,7 +82,7 @@ install_aur_package() {
     if [[ ! ${ans} == "n" && ! ${ans} =~ "N" ]]; then
         makepkg --install --syncdeps --rmdeps
     else
-        echo "==> Package not installed; cleaning up..."
+        echo "\n==> Package not installed; cleaning up..."
         rm -rf ${program_cache}/${pkg}
     fi
 
@@ -100,7 +101,10 @@ main() {
     case ${operation} in
         -h )
             display_help_message
-            exit 0
+            ;;
+
+        -v )
+            echo "Version: ${VERSION}"
             ;;
 
         install )
@@ -140,7 +144,7 @@ main() {
                 echo "warning: the 'update' operation takes no arguments"
             fi
 
-            update_aur_package_list
+            update_aur_package_list "v"
             ;;
 
         * )
