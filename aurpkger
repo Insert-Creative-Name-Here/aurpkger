@@ -3,9 +3,9 @@
 alias echo='echo -e'
 
 # Some basic information
-readonly PROGRAM_NAME=$(basename $0)
+readonly PROGRAM_NAME="$(basename $0)"
 readonly COMPLETE_ARGS_LIST="$@"
-readonly VERSION="0.0.2"
+readonly VERSION="0.0.4"
 
 readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
 readonly aur_package_list="${program_cache}/package_list"
@@ -17,6 +17,9 @@ readonly RESET_CLR='\e[0m'
 readonly BOLD='\e[1m'
 readonly ITALIC='\e[3m'
 
+readonly ERROR="${BOLD}${LIGHT_RED}error:${RESET_CLR}"
+readonly WARNING="${LIGHT_RED}warning:${RESET_CLR}"
+
 display_help_message() {
     echo "Usage:  ${PROGRAM_NAME} <operation> [...]"
     echo "Operations:"
@@ -25,7 +28,8 @@ display_help_message() {
 
 initialization_and_sanitization() {
     if ! ping archlinux.org -c 1 &> /dev/null; then
-        echo "${LIGHT_RED}error:${RESET_CLR} https://archlinux.org is unreachable"
+        echo "${ERROR} https://archlinux.org is unreachable"
+        exit 1
     fi
 
     [[ -d ${program_cache} ]] || mkdir ${program_cache}
@@ -52,7 +56,7 @@ search_packages_in_aur() {
     declare results=$(grep "$@" ${aur_package_list})
 
     while IFS= read -r pkg; do
-        echo "${BOLD}${BLUE}aur/${RESET_CLR}${BOLD}${pkg}${RESET_CLR}"
+        echo "${BLUE}aur/${RESET_CLR}${BOLD}${pkg}${RESET_CLR}"
     done <<< "${results}"
 
     return 0
@@ -62,7 +66,7 @@ install_aur_package() {
     declare -r pkg=$1
 
     if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
-        echo "${LIGHT_RED}error:${RESET_CLR} package does not exist in aur"
+        echo "${ERROR} package does not exist in aur"
         exit 1
     fi
 
@@ -91,6 +95,26 @@ install_aur_package() {
     return 0
 }
 
+remove_aur_package() {
+    declare -r pkg=$1
+
+    if ! pacman -Q ${pkg} &> /dev/null; then
+        echo "${ERROR} package is not installed on system"
+        exit 1
+    fi
+
+    if [[ ! -d ${program_cache}/${pkg} ]]; then
+        echo "${WARNING} package is not in ${program_cache}"
+    else 
+        echo "==> Removing ${program_cache}/${pkg}..."
+        rm -rf ${program_cache}/${pkg}
+    fi
+    
+    sudo pacman -Rns ${pkg}
+
+    return 0
+}
+
 # main: centralizezd place to run all functions of the program
 main() {
     initialization_and_sanitization
@@ -113,7 +137,7 @@ main() {
             
             # Error checking
             if [[ -z ${pkgs} ]]; then 
-                echo "${LIGHT_RED}error:${RESET_CLR} no package specified" &&
+                echo "${ERROR} no package specified" &&
                 exit 1
             else
                 shift
@@ -130,7 +154,7 @@ main() {
 
             # Error checking 
             if [[ -z ${pkgs} ]]; then 
-                echo "${LIGHT_RED}error:${RESET_CLR} no package specified" &&
+                echo "${ERROR} no package specified" &&
                 exit 1
             else
                 shift
@@ -141,14 +165,31 @@ main() {
         update )
             shift
             if [[ ! -z $1 ]]; then
-                echo "warning: the 'update' operation takes no arguments"
+                echo "${WARNING} the 'update' operation takes no arguments"
             fi
 
             update_aur_package_list "v"
             ;;
 
+        remove ) 
+            shift
+            declare pkgs=$@
+
+            # More error checking...
+            if [[ -z ${pkgs} ]]; then
+                echo "${ERROR} no package specified" &&
+                exit 1
+            else 
+                shift
+            fi
+
+            for pkg in ${pkgs}; do
+                remove_aur_package ${pkg}
+            done
+            ;;
+
         * )
-            echo "${LIGHT_RED}error:${RESET_CLR} no operation specified (use -h for help)"
+            echo "${ERROR} no operation specified (use -h for help)"
             exit 1
             ;;
     esac
