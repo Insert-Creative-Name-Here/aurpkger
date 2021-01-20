@@ -5,7 +5,7 @@ alias echo='echo -e'
 # Some basic information
 readonly PROGRAM_NAME="$(basename $0)"
 readonly COMPLETE_ARGS_LIST="$@"
-readonly VERSION="0.0.6"
+readonly VERSION="0.0.7"
 
 readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
 readonly aur_package_list="${program_cache}/package_list"
@@ -66,9 +66,26 @@ install_aur_package() {
     declare -r pkg=$1
     declare install_location=${program_cache}/${pkg}
 
+    # If package is not in list of packages,
     if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
-        echo "${ERROR} package does not exist in aur"
-        exit 1
+        # If pacman cannot locate package either
+        if ! pacman -Si ${pkg} &>/dev/null; then
+            echo "${ERROR} package does not exist in aur, nor official
+            repositories"
+            exit 1
+        else
+            echo "${WARNING} package not found in aur, but found in official" \
+                "repositories.\n"
+            echo -n "${BOLD}>> Install from official repositories?${RESET_CLR} "
+            echo -En '[Y\n] '
+            read ans
+            if [[ ! ${ans} == "n" && ! ${ans} == "N" ]]; then
+                sudo pacman -S ${pkg}
+            else
+                echo "\n---> User declined to install; exiting..."
+                exit 0
+            fi
+        fi
     fi
 
     # If the process is killed, remove the package
