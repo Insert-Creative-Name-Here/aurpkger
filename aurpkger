@@ -1,31 +1,47 @@
 #!/usr/bin/sh
+# 
+# Install and manage AUR packages
 
 alias echo='echo -e'
 
-# Some basic information
+# Basic info about the program, easily changeable
 readonly PROGRAM_NAME="$(basename $0)"
 readonly COMPLETE_ARGS_LIST="$@"
-readonly VERSION="0.0.7"
+readonly VERSION="0.0.8"
 
 readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
 readonly aur_package_list="${program_cache}/package_list"
 
-# Colours
+# Colours -- they make things easier to distinguish
 readonly LIGHT_RED='\e[1;31m'
 readonly BLUE='\e[1m\e[0;36m'
 readonly RESET_CLR='\e[0m'
 readonly BOLD='\e[1m'
-readonly ITALIC='\e[3m'
-
 readonly ERROR="${BOLD}${LIGHT_RED}error:${RESET_CLR}"
 readonly WARNING="${LIGHT_RED}warning:${RESET_CLR}"
 
+###
+# Globals:
+#   PROGRAM_NAME
+# Arguments:
+#   none
+###
 display_help_message() {
-    echo "Usage:  ${PROGRAM_NAME} <operation> [...]"
-    echo "Operations:"
-    echo "   ${PROGRAM_NAME} install   <package(s)>"
+cat <<END_OF_HELP
+Usage:  ${PROGRAM_NAME} <operation> [...]
+Operations:
+    ${PROGRAM_NAME} install   <package(s)>
+END_OF_HELP
 }
 
+###
+# Globals:
+#   $program_cache
+#   $aur_package_list
+#   $ERROR
+# Arguments:
+#   none
+###
 initialization_and_sanitization() {
     if ! ping archlinux.org -c 1 &> /dev/null; then
         echo "${ERROR} https://archlinux.org is unreachable"
@@ -38,6 +54,16 @@ initialization_and_sanitization() {
     [[ -f ${aur_package_list} ]] || update_aur_package_list &
 }
 
+###
+# Equivalent of pacman -Sy, aka sync with database
+# Globals:
+#   aur_package_list
+# Arguments:
+#   'v' (verbose) *or* none
+# Returns:
+#   If the verbose argument is given, gives status
+#   Updated list of programs 
+###
 update_aur_package_list() {
     [[ $1 == "v" ]] && echo "==> Downloading list of AUR packages..."
     curl -o ${aur_package_list}.gz -L https://aur.archlinux.org/packages.gz &>/dev/null
@@ -52,6 +78,18 @@ update_aur_package_list() {
     sed '/^#/d' -i ${aur_package_list}
 }
 
+###
+# Effectively, perform something like pacman -Ss on arguemnts
+# Globals:
+#   aur_package_list
+#   BLUE
+#   RESET_CLR
+#   BOLD
+# Arguments:
+#   Package(s) to search for
+# Returns:
+#   Displays results
+###
 search_packages_in_aur() {
     declare results=$(grep "$@" ${aur_package_list})
 
@@ -62,13 +100,25 @@ search_packages_in_aur() {
     return 0
 }
 
+###
+# Somewhat like pacman -S
+# Globals:
+#   aur_package_list
+#   ERROR
+#   WARNING
+#   BOLD
+#   RESET_CLR
+#   program_cache
+# Arguments:
+#   pkg (package to install)
+# Returns:
+#   0 on success, exits with 1 otherwise
+###
 install_aur_package() {
     declare -r pkg=$1
-    declare install_location=${program_cache}/${pkg}
+    declare -r install_location=${program_cache}/${pkg}
 
-    # If package is not in list of packages,
     if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
-        # If pacman cannot locate package either
         if ! pacman -Si ${pkg} &>/dev/null; then
             echo "${ERROR} package does not exist in aur, nor official
             repositories"
@@ -83,14 +133,14 @@ install_aur_package() {
                 sudo pacman -S ${pkg}
             else
                 echo "\n---> User declined to install; exiting..."
-                exit 0
+                exit 1
             fi
         fi
     fi
 
-    # If the process is killed, remove the package
+    # Abort installation if user kills process
     trap "rm -rf ${install_location}; echo \"\n\n${ERROR} aborted by user; exiting...\";
-    exit" SIGTERM SIGINT SIGHUP
+    exit 1" SIGTERM SIGINT SIGHUP
 
     echo "---> Downloading package '${pkg}'...\n"
     git clone https://aur.archlinux.org/${pkg}.git ${install_location} &>/dev/null
@@ -127,6 +177,16 @@ install_aur_package() {
     return 0
 }
 
+###
+# Globals:
+#   ERROR
+#   WARNING
+#   program_cache
+# Arguments:
+#   Package to remove
+# Returns:
+#   0 on success, exits otherwise
+###
 remove_aur_package() {
     declare -r pkg=$1
 
@@ -147,7 +207,17 @@ remove_aur_package() {
     return 0
 }
 
-# main: centralizezd place to run all functions of the program
+###
+# Control the program
+# Globals:
+#   VERSION
+#   ERROR
+#   WARNING
+# Arguments:
+#   Everything passed to the script
+# Returns:
+#   0 if success, 1 otherwise
+###
 main() {
     initialization_and_sanitization
 
