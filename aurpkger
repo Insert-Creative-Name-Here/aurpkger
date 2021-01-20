@@ -5,7 +5,7 @@ alias echo='echo -e'
 # Some basic information
 readonly PROGRAM_NAME="$(basename $0)"
 readonly COMPLETE_ARGS_LIST="$@"
-readonly VERSION="0.0.4"
+readonly VERSION="0.0.6"
 
 readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
 readonly aur_package_list="${program_cache}/package_list"
@@ -23,7 +23,7 @@ readonly WARNING="${LIGHT_RED}warning:${RESET_CLR}"
 display_help_message() {
     echo "Usage:  ${PROGRAM_NAME} <operation> [...]"
     echo "Operations:"
-    echo "   ${PROGRAM_NAME} install   [options] <package(s)>"
+    echo "   ${PROGRAM_NAME} install   <package(s)>"
 }
 
 initialization_and_sanitization() {
@@ -64,33 +64,48 @@ search_packages_in_aur() {
 
 install_aur_package() {
     declare -r pkg=$1
+    declare install_location=${program_cache}/${pkg}
 
     if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
         echo "${ERROR} package does not exist in aur"
         exit 1
     fi
 
-    echo "==> Downloading package '${pkg}'...\n"
-    git clone https://aur.archlinux.org/${pkg}.git ${program_cache}/${pkg} &> /dev/null
+    # If the process is killed, remove the package
+    trap "rm -rf ${install_location}; echo \"\n\n${ERROR} aborted by user; exiting...\";
+    exit" SIGTERM SIGINT SIGHUP
 
-    cd ${program_cache}/${pkg}
+    echo "---> Downloading package '${pkg}'...\n"
+    git clone https://aur.archlinux.org/${pkg}.git ${install_location} &>/dev/null
 
-    echo -En '>> Read PKGBUILD? [Y\n] '
+    cd ${install_location}
+
+    echo -n "${BOLD}>>> Read PKGBUILD?${RESET_CLR} "
+    echo -En '[Y\n] '
     read ans
     if [[ ! ${ans} == "n" && ! ${ans} == "N" ]]; then
         ${PAGER} ./PKGBUILD
     fi
 
-    echo -En '>> Build package? [Y\n] '
+    echo -n ">${BOLD}>> Build package?${RESET_CLR} "
+    echo -En '[Y\n] '
+
     read ans
     if [[ ! ${ans} == "n" && ! ${ans} =~ "N" ]]; then
-        makepkg --install --syncdeps --rmdeps
+        if makepkg --install --syncdeps --rmdeps; then
+            echo "\n---> '${pkg}' was successfully installed"
+        else
+            echo "\n---> Package not successfully installed; cleaning up..."
+            rm -rf ${install_location}
+        fi
     else
-        echo "\n==> Package not installed; cleaning up..."
-        rm -rf ${program_cache}/${pkg}
+        echo "\n---> User declined to install; cleaning up..."
+        rm -rf ${install_location}
     fi
 
-    echo "\n==> Finished"
+    # Change directory back, or else git will give a "fatal: unable to read
+    # current working directory" error
+    cd
 
     return 0
 }
@@ -106,7 +121,7 @@ remove_aur_package() {
     if [[ ! -d ${program_cache}/${pkg} ]]; then
         echo "${WARNING} package is not in ${program_cache}"
     else 
-        echo "==> Removing ${program_cache}/${pkg}..."
+        echo "---> Removing ${program_cache}/${pkg}..."
         rm -rf ${program_cache}/${pkg}
     fi
     
