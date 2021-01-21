@@ -7,7 +7,7 @@ alias echo='echo -e'
 # Basic info about the program, easily changeable
 readonly PROGRAM_NAME="$(basename $0)"
 readonly COMPLETE_ARGS_LIST="$@"
-readonly VERSION="0.0.8"
+readonly VERSION="0.0.9"
 
 readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
 readonly aur_package_list="${program_cache}/package_list"
@@ -129,12 +129,15 @@ install_aur_package() {
             echo -n "${BOLD}>> Install from official repositories?${RESET_CLR} "
             echo -En '[Y\n] '
             read ans
-            if [[ ! ${ans} == "n" && ! ${ans} == "N" ]]; then
-                sudo pacman -S ${pkg}
-            else
-                echo "\n---> User declined to install; exiting..."
-                exit 1
-            fi
+            case $ans in
+                n|N) 
+                    echo "\n---> User declined to install; exiting..."
+                    exit 1
+                    ;;
+                *) 
+                    sudo pacman -S ${pkg}
+                    ;;
+            esac
         fi
     fi
 
@@ -142,33 +145,42 @@ install_aur_package() {
     trap "rm -rf ${install_location}; echo \"\n\n${ERROR} aborted by user; exiting...\";
     exit 1" SIGTERM SIGINT SIGHUP
 
+
     echo "---> Downloading package '${pkg}'...\n"
     git clone https://aur.archlinux.org/${pkg}.git ${install_location} &>/dev/null
 
     cd ${install_location}
 
+
     echo -n "${BOLD}>>> Read PKGBUILD?${RESET_CLR} "
     echo -En '[Y\n] '
     read ans
-    if [[ ! ${ans} == "n" && ! ${ans} == "N" ]]; then
-        ${PAGER} ./PKGBUILD
-    fi
+    case ${ans} in
+        n|N)
+            ;;
+        *)
+            ${PAGER} ./PKGBUILD
+    esac
+
 
     echo -n ">${BOLD}>> Build package?${RESET_CLR} "
     echo -En '[Y\n] '
-
     read ans
-    if [[ ! ${ans} == "n" && ! ${ans} =~ "N" ]]; then
-        if makepkg --install --syncdeps --rmdeps; then
-            echo "\n---> '${pkg}' was successfully installed"
-        else
-            echo "\n---> Package not successfully installed; cleaning up..."
+    case ${ans} in
+        n|N)
+            echo "\n---> User declined to install; cleaning up..."
             rm -rf ${install_location}
-        fi
-    else
-        echo "\n---> User declined to install; cleaning up..."
-        rm -rf ${install_location}
-    fi
+            ;;
+        *)
+            # This actually runs the command, and then checks the exit code
+            # (confusingly, it only accepts '0', which is 'success')
+            if makepkg --install --syncdeps --rmdeps; then
+                echo "\n---> '${pkg}' was successfully installed"
+            else
+                echo "\n---> Package not successfully installed; cleaning up..."
+                rm -rf ${install_location}
+            fi
+    esac
 
     # Change directory back, or else git will give a "fatal: unable to read
     # current working directory" error
@@ -219,7 +231,7 @@ remove_aur_package() {
 #   0 if success, 1 otherwise
 ###
 main() {
-    initialization_and_sanitization
+    initialization_and_sanitization &
 
     declare operation=$1
 
