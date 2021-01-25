@@ -6,8 +6,7 @@ alias echo='echo -e'
 
 # Basic info about the program, easily changeable
 readonly PROGRAM_NAME="$(basename $0)"
-readonly COMPLETE_ARGS_LIST="$@"
-readonly VERSION="0.0.9"
+readonly VERSION="0.1.0"
 
 readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
 readonly aur_package_list="${program_cache}/package_list"
@@ -28,9 +27,14 @@ readonly WARNING="${LIGHT_RED}warning:${RESET_CLR}"
 ###
 display_help_message() {
 cat <<END_OF_HELP
+${PROGRAM_NAME} version ${VERSION}
 Usage:  ${PROGRAM_NAME} <operation> [...]
 Operations:
+    ${PROGRAM_NAME} -h | -H
     ${PROGRAM_NAME} install   <package(s)>
+    ${PROGRAM_NAME} remove    <package(s)>
+    ${PROGRAM_NAME} search
+    ${PROGRAM_NAME} update-aur-package-list
 END_OF_HELP
 }
 
@@ -49,8 +53,6 @@ initialization_and_sanitization() {
     fi
 
     [[ -d ${program_cache} ]] || mkdir ${program_cache}
-
-    # Execute function in the background
     [[ -f ${aur_package_list} ]] || update_aur_package_list &
 }
 
@@ -59,10 +61,9 @@ initialization_and_sanitization() {
 # Globals:
 #   aur_package_list
 # Arguments:
-#   'v' (verbose) *or* none
+#   optionally, 'v' (verbose)
 # Returns:
-#   If the verbose argument is given, gives status
-#   Updated list of programs 
+#   0 on success
 ###
 update_aur_package_list() {
     [[ $1 == "v" ]] && echo "==> Downloading list of AUR packages..."
@@ -76,6 +77,8 @@ update_aur_package_list() {
 
     [[ $1 == "v" ]] && echo "==> Removing comments from unzipped file..."
     sed '/^#/d' -i ${aur_package_list}
+
+    return 0
 }
 
 ###
@@ -88,20 +91,23 @@ update_aur_package_list() {
 # Arguments:
 #   Package(s) to search for
 # Returns:
-#   Displays results
+#   0 on success, exits with 1 otherwise
 ###
 search_packages_in_aur() {
     declare results=$(grep "$@" ${aur_package_list})
 
-    while IFS= read -r pkg; do
-        echo "${BLUE}aur/${RESET_CLR}${BOLD}${pkg}${RESET_CLR}"
-    done <<< "${results}"
-
-    return 0
+    if [[ ! -z ${results} ]]; then
+        while IFS= read -r pkg; do
+            echo "${BLUE}aur/${RESET_CLR}${BOLD}${pkg}${RESET_CLR}"
+        done <<< "${results}"
+        return 0
+    else 
+        exit 1
+    fi
 }
 
 ###
-# Somewhat like pacman -S
+# Basically pacman -S
 # Globals:
 #   aur_package_list
 #   ERROR
@@ -120,8 +126,8 @@ install_aur_package() {
 
     if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
         if ! pacman -Si ${pkg} &>/dev/null; then
-            echo "${ERROR} package does not exist in aur, nor official
-            repositories"
+            echo "${ERROR} package does not exist in aur, nor official" \
+            "repositories"
             exit 1
         else
             echo "${WARNING} package not found in aur, but found in official" \
@@ -141,16 +147,13 @@ install_aur_package() {
         fi
     fi
 
-    # Abort installation if user kills process
     trap "rm -rf ${install_location}; echo \"\n\n${ERROR} aborted by user; exiting...\";
     exit 1" SIGTERM SIGINT SIGHUP
-
 
     echo "---> Downloading package '${pkg}'...\n"
     git clone https://aur.archlinux.org/${pkg}.git ${install_location} &>/dev/null
 
     cd ${install_location}
-
 
     echo -n "${BOLD}>>> Read PKGBUILD?${RESET_CLR} "
     echo -En '[Y\n] '
@@ -162,7 +165,6 @@ install_aur_package() {
             ${PAGER} ./PKGBUILD
     esac
 
-
     echo -n ">${BOLD}>> Build package?${RESET_CLR} "
     echo -En '[Y\n] '
     read ans
@@ -172,8 +174,6 @@ install_aur_package() {
             rm -rf ${install_location}
             ;;
         *)
-            # This actually runs the command, and then checks the exit code
-            # (confusingly, it only accepts '0', which is 'success')
             if makepkg --install --syncdeps --rmdeps; then
                 echo "\n---> '${pkg}' was successfully installed"
             else
@@ -183,7 +183,7 @@ install_aur_package() {
     esac
 
     # Change directory back, or else git will give a "fatal: unable to read
-    # current working directory" error
+    # current working directory" error when installing multiple packages
     cd
 
     return 0
@@ -202,19 +202,10 @@ install_aur_package() {
 remove_aur_package() {
     declare -r pkg=$1
 
-    if ! pacman -Q ${pkg} &> /dev/null; then
-        echo "${ERROR} package is not installed on system"
-        exit 1
-    fi
-
-    if [[ ! -d ${program_cache}/${pkg} ]]; then
-        echo "${WARNING} package is not in ${program_cache}"
-    else 
+    if sudo pacman -Rns ${pkg} && [[ -d ${program_cache}/${pkg} ]]; then
         echo "---> Removing ${program_cache}/${pkg}..."
         rm -rf ${program_cache}/${pkg}
     fi
-    
-    sudo pacman -Rns ${pkg}
 
     return 0
 }
@@ -228,7 +219,7 @@ remove_aur_package() {
 # Arguments:
 #   Everything passed to the script
 # Returns:
-#   0 if success, 1 otherwise
+#   0 on success, 1 otherwise
 ###
 main() {
     initialization_and_sanitization &
@@ -237,46 +228,39 @@ main() {
 
     # Process options
     case ${operation} in
-        -h )
+        -h|-H)
             display_help_message
             ;;
 
-        -v )
-            echo "Version: ${VERSION}"
-            ;;
-
-        install )
-            shift # remove subcommand
+        install)
+            shift
             declare pkgs=$@
-            
-            # Error checking
+
             if [[ -z ${pkgs} ]]; then 
                 echo "${ERROR} no package specified" &&
-                exit 1
-            else
-                shift
+                return 1
             fi
+            shift
 
             for pkg in ${pkgs}; do
                 install_aur_package ${pkg}
             done
             ;;
 
-        search )
+        search)
             shift # remove subcommand
             declare pkgs=$@
 
-            # Error checking 
             if [[ -z ${pkgs} ]]; then 
                 echo "${ERROR} no package specified" &&
-                exit 1
-            else
-                shift
+                return 1
             fi
+            shift
+
             search_packages_in_aur ${pkgs}
             ;;
 
-        update )
+        update-aur-package-list)
             shift
             if [[ ! -z $1 ]]; then
                 echo "${WARNING} the 'update' operation takes no arguments"
@@ -285,30 +269,28 @@ main() {
             update_aur_package_list "v"
             ;;
 
-        remove ) 
+        remove) 
             shift
             declare pkgs=$@
 
-            # More error checking...
             if [[ -z ${pkgs} ]]; then
                 echo "${ERROR} no package specified" &&
-                exit 1
-            else 
-                shift
+                return 1
             fi
+            shift
 
             for pkg in ${pkgs}; do
                 remove_aur_package ${pkg}
             done
             ;;
 
-        * )
-            echo "${ERROR} no operation specified (use -h for help)"
-            exit 1
+        *)
+            echo "${ERROR} no operation specified (use -h or -H for help)"
+            return 1
             ;;
     esac
 
     exit 0
 }
 
-main $COMPLETE_ARGS_LIST
+main $@
