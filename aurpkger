@@ -1,5 +1,5 @@
 #!/usr/bin/sh
-# 
+
 # Install and manage AUR packages
 
 alias echo='echo -e'
@@ -30,7 +30,7 @@ cat <<END_OF_HELP
 ${PROGRAM_NAME} version ${VERSION}
 Usage:  ${PROGRAM_NAME} <operation> [...]
 Operations:
-    ${PROGRAM_NAME} -h | -H
+    ${PROGRAM_NAME} -h
     ${PROGRAM_NAME} install   <package(s)>
     ${PROGRAM_NAME} remove    <package(s)>
     ${PROGRAM_NAME} search
@@ -102,7 +102,7 @@ search_packages_in_aur() {
         done <<< "${results}"
         return 0
     else 
-        exit 1
+        return 1
     fi
 }
 
@@ -130,7 +130,7 @@ install_aur_package() {
             "repositories"
             exit 1
         else
-            echo "${WARNING} package not found in aur, but found in official" \
+            echo "${WARNING} package '${pkg}' not found in aur, but found in official" \
                 "repositories.\n"
             echo -n "${BOLD}>> Install from official repositories?${RESET_CLR} "
             echo -En '[Y\n] '
@@ -228,7 +228,7 @@ main() {
 
     # Process options
     case ${operation} in
-        -h|-H)
+        -h)
             display_help_message
             ;;
 
@@ -290,7 +290,7 @@ main() {
             ;;
     esac
 
-    exit 0
+    return 0
 }
 
 main $@
