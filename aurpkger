@@ -6,10 +6,10 @@ alias echo='echo -e'
 
 # Basic info about the program, easily changeable
 readonly PROGRAM_NAME="$(basename $0)"
-readonly VERSION="0.1.0"
+readonly VERSION="0.1.3"
 
-readonly program_cache="${HOME}/.cache/${PROGRAM_NAME}"
-readonly aur_package_list="${program_cache}/package_list"
+readonly CACHE_LOCATION="${HOME}/.cache/${PROGRAM_NAME}"
+readonly AUR_PACKAGE_LIST="${CACHE_LOCATION}/package_list"
 
 # Colours -- they make things easier to distinguish
 readonly LIGHT_RED='\e[1;31m'
@@ -22,6 +22,7 @@ readonly WARNING="${LIGHT_RED}warning:${RESET_CLR}"
 ###
 # Globals:
 #   PROGRAM_NAME
+#   VERSION
 # Arguments:
 #   none
 ###
@@ -31,123 +32,120 @@ ${PROGRAM_NAME} version ${VERSION}
 Usage:  ${PROGRAM_NAME} <operation> [...]
 Operations:
     ${PROGRAM_NAME} -h
-    ${PROGRAM_NAME} install   <package(s)>
-    ${PROGRAM_NAME} remove    <package(s)>
-    ${PROGRAM_NAME} search
-    ${PROGRAM_NAME} update-aur-package-list
+    ${PROGRAM_NAME} install   <package(s)>     | pacman -S
+    ${PROGRAM_NAME} search    <package(s)>     | pacman -Ss
+    ${PROGRAM_NAME} update                     | pacman -Sy
 END_OF_HELP
 }
 
 ###
-# Globals:
-#   $program_cache
-#   $aur_package_list
-#   $ERROR
-# Arguments:
-#   none
+# Globals:      ERROR
+#               CACHE_LOCATION
+#               AUR_PACKAGE_LIST
+# Arguments:    none
+# Returns:      0 on success, exits with 1 otherwise
 ###
 initialization_and_sanitization() {
     if ! ping archlinux.org -c 1 &> /dev/null; then
-        echo "${ERROR} https://archlinux.org is unreachable"
+        echo "${ERROR} https://aur.archlinux.org is unreachable"
         exit 1
     fi
 
-    [[ -d ${program_cache} ]] || mkdir ${program_cache}
-    [[ -f ${aur_package_list} ]] || update_aur_package_list &
-}
-
-###
-# Equivalent of pacman -Sy, aka sync with database
-# Globals:
-#   aur_package_list
-# Arguments:
-#   optionally, 'v' (verbose)
-# Returns:
-#   0 on success
-###
-update_aur_package_list() {
-    [[ $1 == "v" ]] && echo "==> Downloading list of AUR packages..."
-    curl -o ${aur_package_list}.gz -L https://aur.archlinux.org/packages.gz &>/dev/null
-
-    [[ $1 == "v" ]] && echo "==> Unzipping compressed file..."
-    gunzip < ${aur_package_list}.gz > ${aur_package_list}
-
-    [[ $1 == "v" ]] && echo "==> Removing compressed file..."
-    rm -f ${aur_package_list}.gz
-
-    [[ $1 == "v" ]] && echo "==> Removing comments from unzipped file..."
-    sed '/^#/d' -i ${aur_package_list}
+    [[ -d ${CACHE_LOCATION} ]] || mkdir ${CACHE_LOCATION}
+    [[ -f ${AUR_PACKAGE_LIST} ]] || update_aur_package_list &
 
     return 0
 }
 
 ###
-# Effectively, perform something like pacman -Ss on arguemnts
-# Globals:
-#   aur_package_list
-#   BLUE
-#   RESET_CLR
-#   BOLD
-# Arguments:
-#   Package(s) to search for
-# Returns:
-#   0 on success, exits with 1 otherwise
+# Equivalent of pacman -Sy; sync with database
+# Globals:      AUR_PACKAGE_LIST
+# Arguments:    optionally, 'v' (verbose)
+# Returns:      always 0
 ###
-search_packages_in_aur() {
-    declare results=$(grep "$@" ${aur_package_list})
+update_aur_package_list() {
+    [[ $1 == "v" ]] && echo "==> Downloading list of AUR packages..."
+    curl -o ${AUR_PACKAGE_LIST}.gz -L https://aur.archlinux.org/packages.gz &>/dev/null
+
+    [[ $1 == "v" ]] && echo "==> Unzipping compressed file..."
+    gunzip < ${AUR_PACKAGE_LIST}.gz > ${AUR_PACKAGE_LIST}
+
+    [[ $1 == "v" ]] && echo "==> Removing compressed file..."
+    rm -f ${AUR_PACKAGE_LIST}.gz
+
+    [[ $1 == "v" ]] && echo "==> Removing comments from unzipped file..."
+    sed '/^#/d' -i ${AUR_PACKAGE_LIST}
+
+    return 0
+}
+
+###
+# Perform something like pacman -Ss on argument
+# Globals:      AUR_PACKAGE_LIST
+#               BLUE
+#               RESET_CLR
+#               BOLD
+# Argument:     package to search for
+# Returns:      0 on success, 1 otherwise
+###
+search_package_in_aur() {
+    declare results=$(grep "$1" ${AUR_PACKAGE_LIST})
 
     if [[ ! -z ${results} ]]; then
         while IFS= read -r pkg; do
             echo "${BLUE}aur/${RESET_CLR}${BOLD}${pkg}${RESET_CLR}"
         done <<< "${results}"
         return 0
-    else 
-        return 1
     fi
+
+    return 1
+}
+
+###
+# Argument:     answer to be processed
+# Returns:      0 on success, 1 otherwise
+###
+process_ans() {
+    [[ $1 =~ "n" || $1 =~ "N" ]] && return 1
+    return 0
+}
+
+###
+# Argument:     package name
+# Returns:      0 on success, 1 otherwise
+###
+check_valid_aur_package() {
+    grep -w "^${1}$" ${AUR_PACKAGE_LIST} &> /dev/null && return 0
+    return 1
 }
 
 ###
 # Basically pacman -S
-# Globals:
-#   aur_package_list
-#   ERROR
-#   WARNING
-#   BOLD
-#   RESET_CLR
-#   program_cache
-# Arguments:
-#   pkg (package to install)
-# Returns:
-#   0 on success, exits with 1 otherwise
+# Globals:      AUR_PACKAGE_LIST
+#               ERROR
+#               WARNING
+#               BOLD
+#               RESET_CLR
+#               CACHE_LOCATION
+# Arguments:    package to be installed
+# Returns:      0 on success, 1 otherwise
 ###
 install_aur_package() {
-    declare -r pkg=$1
-    declare -r install_location=${program_cache}/${pkg}
+    local pkg=$1
+    local install_location=${CACHE_LOCATION}/${pkg}
 
-    if ! grep -w "^${pkg}$" ${aur_package_list} &> /dev/null; then
+    if ! check_valid_aur_package ${pkg}; then
         if ! pacman -Si ${pkg} &>/dev/null; then
-            echo "${ERROR} package does not exist in aur, nor official" \
-            "repositories"
-            exit 1
-        else
-            echo "${WARNING} package '${pkg}' not found in aur, but found in official" \
-                "repositories.\n"
-            echo -n "${BOLD}>> Install from official repositories?${RESET_CLR} "
-            echo -En '[Y\n] '
-            read ans
-            case $ans in
-                n|N) 
-                    echo "\n---> User declined to install; exiting..."
-                    exit 1
-                    ;;
-                *) 
-                    sudo pacman -S ${pkg}
-                    ;;
-            esac
+            echo "${ERROR} target not found: '${pkg}'"
+            return 1
         fi
+
+        sudo pacman -S ${pkg} && return 0
+
+        return 1
     fi
 
-    trap "rm -rf ${install_location}; echo \"\n\n${ERROR} aborted by user; exiting...\";
+    trap "rm -rf ${install_location}; echo \"\n\n${ERROR} Aborted!\";
     exit 1" SIGTERM SIGINT SIGHUP
 
     echo "---> Downloading package '${pkg}'...\n"
@@ -158,134 +156,62 @@ install_aur_package() {
     echo -n "${BOLD}>>> Read PKGBUILD?${RESET_CLR} "
     echo -En '[Y\n] '
     read ans
-    case ${ans} in
-        n|N)
-            ;;
-        *)
-            ${PAGER} ./PKGBUILD
-    esac
+    process_ans ${ans} && ${PAGER} PKGBUILD
 
-    echo -n ">${BOLD}>> Build package?${RESET_CLR} "
+    echo -n "${BOLD}>>> Build package?${RESET_CLR} "
     echo -En '[Y\n] '
     read ans
-    case ${ans} in
-        n|N)
-            echo "\n---> User declined to install; cleaning up..."
-            rm -rf ${install_location}
-            ;;
-        *)
-            if makepkg --install --syncdeps --rmdeps; then
-                echo "\n---> '${pkg}' was successfully installed"
-            else
-                echo "\n---> Package not successfully installed; cleaning up..."
-                rm -rf ${install_location}
-            fi
-    esac
+    process_ans ${ans} && makepkg --install --syncdeps --rmdeps && return 0
 
     # Change directory back, or else git will give a "fatal: unable to read
     # current working directory" error when installing multiple packages
     cd
-
-    return 0
+    
+    # Some cleanup if installation failed
+    rm -rf ${install_location}
+    return 1
 }
 
-###
-# Globals:
-#   ERROR
-#   WARNING
-#   program_cache
-# Arguments:
-#   Package to remove
-# Returns:
-#   0 on success, exits otherwise
-###
-remove_aur_package() {
-    declare -r pkg=$1
-
-    if sudo pacman -Rns ${pkg} && [[ -d ${program_cache}/${pkg} ]]; then
-        echo "---> Removing ${program_cache}/${pkg}..."
-        rm -rf ${program_cache}/${pkg}
-    fi
-
-    return 0
-}
-
-###
-# Control the program
-# Globals:
-#   VERSION
-#   ERROR
-#   WARNING
-# Arguments:
-#   Everything passed to the script
-# Returns:
-#   0 on success, 1 otherwise
-###
 main() {
+    readonly OPERATION=$1
+
     initialization_and_sanitization &
 
-    declare operation=$1
-
+    shift # remove subcommand
     # Process options
-    case ${operation} in
+    case ${OPERATION} in
         -h)
             display_help_message
             ;;
 
         install)
-            shift
             declare pkgs=$@
 
-            if [[ -z ${pkgs} ]]; then 
-                echo "${ERROR} no package specified" &&
-                return 1
-            fi
+            [[ -z ${pkgs} ]] && echo "${ERROR} no package specified" && return 1
+            
             shift
-
             for pkg in ${pkgs}; do
                 install_aur_package ${pkg}
             done
             ;;
 
         search)
-            shift # remove subcommand
             declare pkgs=$@
 
-            if [[ -z ${pkgs} ]]; then 
-                echo "${ERROR} no package specified" &&
-                return 1
-            fi
+            [[ -z ${pkgs} ]] && echo "${ERROR} no package specified" && return 1
+
             shift
-
-            search_packages_in_aur ${pkgs}
-            ;;
-
-        update-aur-package-list)
-            shift
-            if [[ ! -z $1 ]]; then
-                echo "${WARNING} the 'update' operation takes no arguments"
-            fi
-
-            update_aur_package_list "v"
-            ;;
-
-        remove) 
-            shift
-            declare pkgs=$@
-
-            if [[ -z ${pkgs} ]]; then
-                echo "${ERROR} no package specified" &&
-                return 1
-            fi
-            shift
-
-            for pkg in ${pkgs}; do
-                remove_aur_package ${pkg}
+            for pkg in $pkgs; do
+                search_package_in_aur ${pkg}
             done
             ;;
 
+        update)
+            update_aur_package_list "v"
+            ;;
+
         *)
-            echo "${ERROR} no operation specified (use -h or -H for help)"
+            echo "${ERROR} no operation specified (use -h for help)"
             return 1
             ;;
     esac
